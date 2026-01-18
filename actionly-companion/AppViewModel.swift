@@ -57,11 +57,21 @@ class AppViewModel {
     func executeShortcuts() {
         isProcessing = true
 
-        // TODO: This is where you'll execute the shortcuts
-        // For now, we'll simulate execution
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-            self.currentState = .completion(success: true, message: "Successfully executed \(self.generatedShortcuts.count) shortcuts")
-            self.isProcessing = false
+        // Convert KeyboardShortcuts to ShortcutActions
+        let actions = generatedShortcuts.compactMap { $0.toAction() }
+
+        guard !actions.isEmpty else {
+            currentState = .completion(success: false, message: "No valid actions to execute")
+            isProcessing = false
+            return
+        }
+
+        // Execute the shortcuts using ShortcutExecutor
+        ShortcutExecutor.shared.execute(actions) { [weak self] success, message in
+            DispatchQueue.main.async {
+                self?.currentState = .completion(success: success, message: message)
+                self?.isProcessing = false
+            }
         }
     }
 
