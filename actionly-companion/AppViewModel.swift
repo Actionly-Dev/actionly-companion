@@ -30,13 +30,22 @@ class AppViewModel {
     var generatedShortcuts: [KeyboardShortcut] = []
     var isProcessing: Bool = false
 
+    private let settings = SettingsManager.shared
+
     // MARK: - Navigation Actions
     func submitPrompt() {
         guard !userPrompt.isEmpty else { return }
 
+        // Check if API is configured
+        guard settings.hasValidSettings else {
+            currentState = .completion(success: false, message: "Please configure your API token in Settings (Cmd+,)")
+            return
+        }
+
         isProcessing = true
 
         // TODO: This is where you'll call your model to translate prompt into shortcuts
+        // Use: settings.apiToken and settings.selectedModel
         // For now, we'll simulate with dummy data
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
             self.generatedShortcuts = self.generateMockShortcuts()

@@ -14,7 +14,7 @@ struct actionly_companionApp: App {
 
     var body: some Scene {
         Settings {
-            EmptyView()
+            SettingsView()
         }
     }
 }

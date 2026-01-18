@@ -40,20 +40,6 @@ struct CompletionView: View {
                 .padding(.horizontal)
 
             Spacer()
-
-            // Action Button
-            Button(action: {
-                viewModel.reset()
-            }) {
-                HStack {
-                    Image(systemName: "arrow.counterclockwise")
-                    Text("Start Over")
-                }
-                .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.borderedProminent)
-            .padding(.horizontal)
-            .padding(.bottom, 8)
         }
         .background(Color.clear)
     }
