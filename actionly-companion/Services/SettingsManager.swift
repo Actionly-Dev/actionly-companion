@@ -23,9 +23,12 @@ class SettingsManager {
 
     var apiToken: String {
         get {
-            KeychainHelper.shared.getToken(for: apiTokenKey) ?? ""
+            let token = KeychainHelper.shared.getToken(for: apiTokenKey) ?? ""
+            print("🔑 Retrieved API token from keychain (length: \(token.count))")
+            return token
         }
         set {
+            print("💾 Saving API token to keychain (length: \(newValue.count))")
             if newValue.isEmpty {
                 try? KeychainHelper.shared.deleteToken(for: apiTokenKey)
             } else {

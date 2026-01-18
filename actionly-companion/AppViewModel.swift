@@ -44,13 +44,34 @@ class AppViewModel {
 
         isProcessing = true
 
-        // TODO: This is where you'll call your model to translate prompt into shortcuts
-        // Use: settings.apiToken and settings.selectedModel
-        // For now, we'll simulate with dummy data
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-            self.generatedShortcuts = self.generateMockShortcuts()
-            self.currentState = .review
-            self.isProcessing = false
+        // Get the target application name for context
+        let targetApp = ApplicationTracker.shared.previousApplication?.localizedName
+
+        // Call Gemini API to generate shortcuts
+        GeminiService.shared.generateShortcuts(
+            prompt: userPrompt,
+            model: settings.selectedModel,
+            apiKey: settings.apiToken,
+            targetApp: targetApp
+        ) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+
+                self.isProcessing = false
+
+                switch result {
+                case .success(let shortcuts):
+                    if shortcuts.isEmpty {
+                        self.currentState = .completion(success: false, message: "No shortcuts were generated. Try rephrasing your request.")
+                    } else {
+                        self.generatedShortcuts = shortcuts
+                        self.currentState = .review
+                    }
+
+                case .failure(let error):
+                    self.currentState = .completion(success: false, message: error.localizedDescription)
+                }
+            }
         }
     }
 

@@ -8,21 +8,26 @@
 import Foundation
 
 enum AIModel: String, CaseIterable, Identifiable {
-    case gemini25flash = "gemini-2.5-flash"
-    
-    
+    case gemini15Pro = "gemini-1.5-pro-latest"
+    case gemini15Flash = "gemini-1.5-flash-latest"
+    case gemini25Flash = "gemini-2.5-flash"
+
     var id: String { rawValue }
-    
+
     var displayName: String {
         switch self {
-        case .gemini25flash:
+        case .gemini15Pro:
+            return "Gemini 1.5 Pro"
+        case .gemini15Flash:
+            return "Gemini 1.5 Flash"
+        case .gemini25Flash:
             return "Gemini 2.5 Flash"
         }
     }
-    
+
     var provider: AIProvider {
         switch self {
-        case .gemini25flash:
+        case .gemini15Pro, .gemini15Flash, .gemini25Flash:
             return .google
         }
     }
@@ -35,8 +40,8 @@ enum AIProvider: String {
 struct AppSettings {
     var selectedModel: AIModel
     var apiToken: String
-    
-    static let defaultModel: AIModel = .gemini25flash
+
+    static let defaultModel: AIModel = .gemini15Flash
 }
 
 

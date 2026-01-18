@@ -41,14 +41,18 @@ extension ShortcutAction {
     static func parse(from keyString: String, description: String = "") -> ShortcutAction? {
         let trimmed = keyString.trimmingCharacters(in: .whitespaces)
 
-        // Check if it's a text input
-        if trimmed.lowercased() == "text input" || description.lowercased().contains("type") {
-            // Extract text from description if possible
-            if let range = description.range(of: "'([^']+)'", options: .regularExpression) {
-                let text = String(description[range]).replacingOccurrences(of: "'", with: "")
-                return .typeText(text)
-            }
-            return nil // Will need actual text to type
+        // Check if it's a text input with TEXT: prefix
+        if trimmed.uppercased().hasPrefix("TEXT:") {
+            let text = String(trimmed.dropFirst(5)) // Remove "TEXT:" prefix
+            guard !text.isEmpty else { return nil }
+            return .typeText(text)
+        }
+
+        // Legacy support for "Text Input" format (uses description)
+        if trimmed.lowercased() == "text input" {
+            let textToType = description.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !textToType.isEmpty else { return nil }
+            return .typeText(textToType)
         }
 
         // Parse keyboard shortcut
