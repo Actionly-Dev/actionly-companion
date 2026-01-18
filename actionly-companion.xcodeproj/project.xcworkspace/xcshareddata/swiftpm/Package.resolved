@@ -1,0 +1,15 @@
+{
+  "originHash" : "c3953689c6bb4e4d7f43cb6a8ec95cc44800ec358909d4e236504ad19d77f50b",
+  "pins" : [
+    {
+      "identity" : "googlegenerativeai",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/SilverMarcs/GoogleGenerativeAI",
+      "state" : {
+        "branch" : "main",
+        "revision" : "88c1601cff8fafcbd48802d1bb1c11d155a4a235"
+      }
+    }
+  ],
+  "version" : 3
+}
