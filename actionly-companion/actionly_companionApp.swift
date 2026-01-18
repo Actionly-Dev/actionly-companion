@@ -116,6 +116,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func showWindow() {
+        // Capture the currently active app before showing our window
+        ApplicationTracker.shared.capturePreviousApplication()
+
         window?.center()
         NSApp.activate(ignoringOtherApps: true)
         window?.makeKeyAndOrderFront(nil)

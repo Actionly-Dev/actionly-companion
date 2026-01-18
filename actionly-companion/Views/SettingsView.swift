@@ -102,13 +102,8 @@ struct GeneralSettingsView: View {
             } header: {
                 Text("API Authentication")
             } footer: {
-                if settings.selectedModel.provider == .openai {
-                    Text("Get your OpenAI API token from https://platform.openai.com/api-keys")
-                        .font(.caption)
-                } else {
-                    Text("Get your Anthropic API token from https://console.anthropic.com/settings/keys")
-                        .font(.caption)
-                }
+                Text("Get your Google AI API key from https://aistudio.google.com/app/apikey")
+                    .font(.caption)
             }
 
             Section {
