@@ -43,6 +43,7 @@ class GeminiService {
         model: AIModel,
         apiKey: String,
         targetApp: String?,
+        screenshotData: Data? = nil,
         completion: @escaping (Result<[KeyboardShortcut], GeminiError>) -> Void
     ) {
         print("🌐 Calling Gemini REST API: \(model.rawValue)")
@@ -80,13 +81,26 @@ class GeminiService {
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
+        // Build request body parts (text + optional image)
+        var parts: [[String: Any]] = [["text": fullPrompt]]
+
+        // Add screenshot if provided
+        if let imageData = screenshotData {
+            let base64Image = imageData.base64EncodedString()
+            print("📸 Including screenshot (\(imageData.count) bytes)")
+            parts.append([
+                "inline_data": [
+                    "mime_type": "image/png",
+                    "data": base64Image
+                ]
+            ])
+        }
+
         // Build request body
         let requestBody: [String: Any] = [
             "contents": [
                 [
-                    "parts": [
-                        ["text": fullPrompt]
-                    ]
+                    "parts": parts
                 ]
             ],
             "generationConfig": [
@@ -209,6 +223,8 @@ class GeminiService {
         You are a macOS automation assistant. Convert user requests into keyboard shortcuts.
 
         \(appContext)
+
+        A screenshot of the current screen may be provided to give you visual context.
 
         CRITICAL RULES:
         1. Output ONLY valid JSON - no extra text before or after

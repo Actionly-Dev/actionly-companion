@@ -47,29 +47,46 @@ class AppViewModel {
         // Get the target application name for context
         let targetApp = ApplicationTracker.shared.previousApplication?.localizedName
 
-        // Call Gemini API to generate shortcuts
-        GeminiService.shared.generateShortcuts(
-            prompt: userPrompt,
-            model: settings.selectedModel,
-            apiKey: settings.apiToken,
-            targetApp: targetApp
-        ) { [weak self] result in
-            DispatchQueue.main.async {
-                guard let self = self else { return }
+        // Capture screenshot asynchronously, then call API
+        Task {
+            var screenshotData: Data? = nil
 
-                self.isProcessing = false
+            // Try to capture screenshot (may fail if Screen Recording permission not granted)
+            do {
+                let screenshotHelper = ScreenshotHelper()
+                let screenshotURL = try await screenshotHelper.captureAndSaveToCaches()
+                screenshotData = try Data(contentsOf: screenshotURL)
+                print("📸 Screenshot captured: \(screenshotURL.path)")
+            } catch {
+                print("⚠️ Could not capture screenshot: \(error.localizedDescription)")
+                // Continue without screenshot - not critical
+            }
 
-                switch result {
-                case .success(let shortcuts):
-                    if shortcuts.isEmpty {
-                        self.currentState = .completion(success: false, message: "No shortcuts were generated. Try rephrasing your request.")
-                    } else {
-                        self.generatedShortcuts = shortcuts
-                        self.currentState = .review
+            // Call Gemini API to generate shortcuts
+            GeminiService.shared.generateShortcuts(
+                prompt: userPrompt,
+                model: settings.selectedModel,
+                apiKey: settings.apiToken,
+                targetApp: targetApp,
+                screenshotData: screenshotData
+            ) { [weak self] result in
+                DispatchQueue.main.async {
+                    guard let self = self else { return }
+
+                    self.isProcessing = false
+
+                    switch result {
+                    case .success(let shortcuts):
+                        if shortcuts.isEmpty {
+                            self.currentState = .completion(success: false, message: "No shortcuts were generated. Try rephrasing your request.")
+                        } else {
+                            self.generatedShortcuts = shortcuts
+                            self.currentState = .review
+                        }
+
+                    case .failure(let error):
+                        self.currentState = .completion(success: false, message: error.localizedDescription)
                     }
-
-                case .failure(let error):
-                    self.currentState = .completion(success: false, message: error.localizedDescription)
                 }
             }
         }
