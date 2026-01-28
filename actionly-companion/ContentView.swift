@@ -23,11 +23,31 @@ struct ContentView: View {
                 ReviewView(viewModel: viewModel)
                     .transition(.opacity)
 
+            case .executing:
+                if let session = viewModel.executionSession {
+                    ExecutionView(
+                        session: session,
+                        actions: viewModel.parsedActions,
+                        onStop: {
+                            viewModel.stopExecution()
+                        },
+                        onDismiss: {
+                            viewModel.finishExecution()
+                        }
+                    )
+                    .transition(.opacity)
+                }
+
             case .completion(let success, let message):
                 CompletionView(
                     viewModel: viewModel,
                     success: success,
-                    message: message
+                    message: message,
+                    onAutoDismiss: {
+                        // Hide window and reset for next time
+                        viewModel.reset()
+                        onClose()
+                    }
                 )
                 .transition(.opacity)
             }
@@ -59,9 +79,15 @@ struct ContentView: View {
         .animation(.easeInOut(duration: 0.3), value: dynamicHeight)
         .onExitCommand {
             // Handle ESC key
-            if viewModel.currentState == .input && !viewModel.isProcessing {
-                onClose()
-            } else {
+            switch viewModel.currentState {
+            case .input:
+                if !viewModel.isProcessing {
+                    onClose()
+                }
+            case .executing:
+                // Stop execution on ESC
+                viewModel.stopExecution()
+            case .review, .completion:
                 viewModel.cancelExecution()
             }
         }
@@ -74,6 +100,8 @@ struct ContentView: View {
             return 300
         case .review:
             return 450
+        case .executing:
+            return 500
         case .completion:
             return 300
         }
@@ -87,6 +115,8 @@ extension AppState: Equatable {
         case (.input, .input):
             return true
         case (.review, .review):
+            return true
+        case (.executing, .executing):
             return true
         case (.completion(let lSuccess, let lMessage), .completion(let rSuccess, let rMessage)):
             return lSuccess == rSuccess && lMessage == rMessage

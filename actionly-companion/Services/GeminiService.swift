@@ -43,24 +43,22 @@ class GeminiService {
         model: AIModel,
         apiKey: String,
         targetApp: String?,
+        runningApps: [String] = [],
         screenshotData: Data? = nil,
         completion: @escaping (Result<[KeyboardShortcut], GeminiError>) -> Void
     ) {
-        print("🌐 Calling Gemini REST API: \(model.rawValue)")
-        print("🔑 API Key length: \(apiKey.count) characters")
+        print("Calling Gemini REST API: \(model.rawValue)")
+        print("API Key length: \(apiKey.count) characters")
 
         // Clean the API key (remove any whitespace or newlines)
         let cleanedApiKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        print("🔑 Cleaned API Key length: \(cleanedApiKey.count) characters")
-        print("🔑 First 10 chars: \(String(cleanedApiKey.prefix(10)))...")
 
         guard !cleanedApiKey.isEmpty else {
             completion(.failure(.invalidAPIKey))
             return
         }
 
-        let systemPrompt = createSystemPrompt(targetApp: targetApp)
+        let systemPrompt = createSystemPrompt(targetApp: targetApp, runningApps: runningApps)
         let fullPrompt = "\(systemPrompt)\n\nUser request: \(prompt)"
 
         // Build the request URL - using v1 API for better model support
@@ -216,13 +214,28 @@ class GeminiService {
         }
     }
 
-    private func createSystemPrompt(targetApp: String?) -> String {
+    private func createSystemPrompt(targetApp: String?, runningApps: [String]) -> String {
         let appContext = targetApp.map { "The user is currently in the \($0) application." } ?? ""
 
-        return """
-        You are a macOS automation assistant. Convert user requests into keyboard shortcuts.
+        // Build running apps context
+        let runningAppsContext: String
+        if runningApps.isEmpty {
+            runningAppsContext = ""
+        } else {
+            let appsList = runningApps.joined(separator: ", ")
+            runningAppsContext = """
 
-        \(appContext)
+            CURRENTLY RUNNING APPLICATIONS (use exact names for SWITCH_APP):
+            \(appsList)
+
+            IMPORTANT: Only use SWITCH_APP with applications from this list. If a required app is not running, inform the user in the description that the app needs to be opened first.
+            """
+        }
+
+        return """
+        You are a macOS automation assistant. Convert user requests into keyboard shortcuts and application actions.
+
+        \(appContext)\(runningAppsContext)
 
         A screenshot of the current screen may be provided to give you visual context.
 
@@ -242,23 +255,51 @@ class GeminiService {
           ]
         }
 
-        Keyboard symbols:
-        - Command: ⌘
-        - Shift: ⇧
-        - Option: ⌥
-        - Control: ⌃
-        - Return/Enter: ↵
-        - For typing text: prefix keys with "TEXT:" followed by the text to type
+        AVAILABLE ACTION TYPES:
 
-        Examples:
-        - Copy: {"name": "Copy", "keys": "⌘ C", "description": "Copy selected text"}
-        - New tab: {"name": "New Tab", "keys": "⌘ T", "description": "Open new browser tab"}
-        - Type hello: {"name": "Type Text", "keys": "TEXT:hello", "description": "Types the word hello"}
+        1. Keyboard Shortcuts (modifier + key):
+           - Command: ⌘
+           - Shift: ⇧
+           - Option: ⌥
+           - Control: ⌃
+           - Return/Enter: ↵
+           Examples: "⌘ C" (copy), "⌘⇧ N" (new folder), "⌃ Tab" (switch tab)
 
-        Rules:
+        2. Type Text (for typing strings):
+           - Format: "TEXT:your text here"
+           - Example: {"name": "Type filename", "keys": "TEXT:report.docx", "description": "Types the filename"}
+
+        3. Switch Application (IMPORTANT for multi-app workflows):
+           - Format: "SWITCH_APP:Application Name"
+           - Use the EXACT application name from the running apps list
+           - Example: {"name": "Switch to Excel", "keys": "SWITCH_APP:Microsoft Excel", "description": "Activate Excel"}
+
+        4. Delay (for waiting):
+           - Format: "DELAY:milliseconds"
+           - Example: {"name": "Wait", "keys": "DELAY:500", "description": "Wait 500ms for app to respond"}
+
+        MULTI-APPLICATION WORKFLOW RULES:
+        - When a task involves multiple applications, ALWAYS include SWITCH_APP actions
+        - Add SWITCH_APP before performing actions in a different application
+        - The workflow should explicitly switch to each app before sending keystrokes to it
+        - Only switch to apps that are in the running apps list
+
+        EXAMPLE MULTI-APP WORKFLOW (Copy from Word to Excel):
+        {
+          "shortcuts": [
+            {"name": "Switch to Word", "keys": "SWITCH_APP:Microsoft Word", "description": "Activate Word"},
+            {"name": "Select All", "keys": "⌘ A", "description": "Select all text in Word"},
+            {"name": "Copy", "keys": "⌘ C", "description": "Copy selected text"},
+            {"name": "Switch to Excel", "keys": "SWITCH_APP:Microsoft Excel", "description": "Activate Excel"},
+            {"name": "Paste", "keys": "⌘ V", "description": "Paste into Excel"}
+          ]
+        }
+
+        GENERAL RULES:
         - Use standard macOS shortcuts when possible
-        - Break complex tasks into simple steps
+        - Break complex tasks into simple, sequential steps
         - Keep descriptions brief and clear
+        - For multi-app tasks, always include explicit app switches
         - Output pure JSON only
         """
     }

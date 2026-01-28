@@ -18,8 +18,13 @@ struct SettingsView: View {
                 .tabItem {
                     Label("General", systemImage: "gear")
                 }
+
+            ExecutionSettingsView(settings: settings)
+                .tabItem {
+                    Label("Execution", systemImage: "play.circle")
+                }
         }
-        .frame(width: 500, height: 300)
+        .frame(width: 500, height: 380)
         .onAppear {
             tempApiToken = settings.apiToken
         }
@@ -115,6 +120,80 @@ struct GeneralSettingsView: View {
                 }
             } header: {
                 Text("Status")
+            }
+        }
+        .formStyle(.grouped)
+        .padding(20)
+    }
+}
+
+struct ExecutionSettingsView: View {
+    @Bindable var settings: SettingsManager
+
+    var body: some View {
+        Form {
+            Section {
+                Picker("Execution Speed:", selection: $settings.executionSpeed) {
+                    ForEach(ExecutionSpeed.allCases) { speed in
+                        Text(speed.displayName).tag(speed)
+                    }
+                }
+                .pickerStyle(.menu)
+
+                Text(settings.executionSpeed.description)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            } header: {
+                Text("Action Timing")
+            } footer: {
+                Text("Slower speeds are more reliable for multi-application workflows. Use faster speeds only if you experience no issues.")
+                    .font(.caption)
+            }
+
+            Section {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Image(systemName: "keyboard")
+                            .foregroundColor(.blue)
+                        Text("Press ESC during execution to stop")
+                    }
+
+                    HStack {
+                        Image(systemName: "arrow.triangle.2.circlepath")
+                            .foregroundColor(.orange)
+                        Text("Multi-app workflows switch apps automatically")
+                    }
+
+                    HStack {
+                        Image(systemName: "clock")
+                            .foregroundColor(.green)
+                        Text("Delays between actions prevent race conditions")
+                    }
+                }
+                .font(.caption)
+            } header: {
+                Text("Execution Tips")
+            }
+
+            Section {
+                let execSettings = settings.executionSettings
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Text("Action delay:")
+                        Spacer()
+                        Text("\(execSettings.actionDelayMs)ms")
+                            .foregroundColor(.secondary)
+                    }
+                    HStack {
+                        Text("App switch delay:")
+                        Spacer()
+                        Text("\(execSettings.appSwitchDelayMs)ms")
+                            .foregroundColor(.secondary)
+                    }
+                }
+                .font(.caption)
+            } header: {
+                Text("Current Timing Values")
             }
         }
         .formStyle(.grouped)

@@ -12,6 +12,7 @@ struct InputView: View {
     @FocusState private var isTextFieldFocused: Bool
 
     var body: some View {
+    
         VStack(spacing: 0) {
             // Content Area
             VStack(spacing: 24) {
@@ -26,23 +27,17 @@ struct InputView: View {
                     .focused($isTextFieldFocused)
                     .textFieldStyle(.plain)
                     .font(.system(size: 16))
-                    .lineLimit(3...6)
-                    .padding(12)
-                    .background(
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(Color(NSColor.controlBackgroundColor))
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8)
-                            .strokeBorder(
-                                isTextFieldFocused ? Color.accentColor : Color.gray.opacity(0.2),
-                                lineWidth: isTextFieldFocused ? 2 : 1
-                            )
-                    )
+                    .lineLimit(3...12)
+                    .border(.white)
+
+  
+             
+        
                     .padding(.horizontal, 24)
             }
 
             Spacer()
+              
 
             // Bottom Action Bar
             HStack {
@@ -63,7 +58,7 @@ struct InputView: View {
                     .padding(.horizontal, 20)
                     .padding(.vertical, 8)
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.glass)
                 .disabled(viewModel.userPrompt.isEmpty || viewModel.isProcessing)
             }
             .padding(.horizontal, 24)

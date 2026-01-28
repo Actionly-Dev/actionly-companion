@@ -11,6 +11,13 @@ struct CompletionView: View {
     var viewModel: AppViewModel
     let success: Bool
     let message: String
+    var onAutoDismiss: (() -> Void)?
+
+    /// Countdown for auto-dismiss (only on success)
+    @State private var countdown: Int = 2
+
+    /// Timer for countdown
+    @State private var timer: Timer?
 
     var body: some View {
         VStack(spacing: 24) {
@@ -39,9 +46,50 @@ struct CompletionView: View {
                 .multilineTextAlignment(.center)
                 .padding(.horizontal)
 
+            // Auto-dismiss countdown (only on success)
+            if success {
+                Text("Closing in \(countdown)...")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            } else {
+                // Retry button on failure
+                Button(action: {
+                    viewModel.reset()
+                }) {
+                    HStack {
+                        Image(systemName: "arrow.counterclockwise")
+                        Text("Try Again")
+                    }
+                }
+                .buttonStyle(.bordered)
+                .padding(.top, 8)
+            }
+
             Spacer()
         }
         .background(Color.clear)
+        .onAppear {
+            if success {
+                startCountdown()
+            }
+        }
+        .onDisappear {
+            timer?.invalidate()
+            timer = nil
+        }
+    }
+
+    private func startCountdown() {
+        countdown = 2
+        timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { _ in
+            if countdown > 1 {
+                countdown -= 1
+            } else {
+                timer?.invalidate()
+                timer = nil
+                onAutoDismiss?()
+            }
+        }
     }
 }
 
