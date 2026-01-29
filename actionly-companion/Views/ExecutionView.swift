@@ -369,7 +369,7 @@ struct ExecutionActionRow: View {
         case .delay(let ms):
             return "DELAY:\(ms)"
         case .switchApplication(let target):
-            return "SWITCH_APP"
+            return "SWITCH APP"
         }
     }
 

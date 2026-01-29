@@ -58,19 +58,36 @@ class AppViewModel {
         let runningApps = WindowManager.shared.getRunningApplications()
             .map { $0.localizedName }
 
-        // Capture screenshot asynchronously, then call API
-        Task {
-            var screenshotData: Data? = nil
+        // Build list of apps to capture screenshots for
+        let mentionedApps = Self.extractMentionedApps(from: userPrompt, runningApps: runningApps)
+        var appsToCapture = mentionedApps
 
-            // Try to capture screenshot (may fail if Screen Recording permission not granted)
+        // Include the previously-active app (the app the user was in before opening Actionly)
+        if let previousAppName = targetApp,
+           !appsToCapture.contains(where: { $0.lowercased() == previousAppName.lowercased() }) {
+            appsToCapture.append(previousAppName)
+        }
+
+        print("📸 Apps to capture: \(appsToCapture)")
+
+        // Capture per-app window screenshots, then call API
+        Task {
+            var screenshots: [LabeledScreenshot] = []
+
             do {
                 let screenshotHelper = ScreenshotHelper()
-                let screenshotURL = try await screenshotHelper.captureAndSaveToCaches()
-                screenshotData = try Data(contentsOf: screenshotURL)
-                print("Screenshot captured: \(screenshotURL.path)")
+                if appsToCapture.isEmpty {
+                    // No specific apps — capture full display
+                    let data = try await screenshotHelper.captureMainDisplayData()
+                    screenshots = [LabeledScreenshot(appName: "Full Display", imageData: data)]
+                    print("📸 Captured full display (\(data.count) bytes)")
+                } else {
+                    screenshots = try await screenshotHelper.captureWindows(forApps: appsToCapture)
+                    print("📸 Captured \(screenshots.count) app windows")
+                }
             } catch {
-                print("Could not capture screenshot: \(error.localizedDescription)")
-                // Continue without screenshot - not critical
+                print("Could not capture screenshots: \(error.localizedDescription)")
+                // Continue without screenshots - not critical
             }
 
             // Call Gemini API to generate shortcuts
@@ -80,7 +97,7 @@ class AppViewModel {
                 apiKey: settings.apiToken,
                 targetApp: targetApp,
                 runningApps: runningApps,
-                screenshotData: screenshotData
+                screenshots: screenshots
             ) { [weak self] result in
                 DispatchQueue.main.async {
                     guard let self = self else { return }
@@ -181,6 +198,29 @@ class AppViewModel {
         executionSession = nil
         currentState = .input
         isProcessing = false
+    }
+
+    // MARK: - Mention Extraction
+
+    /// Extract @mentioned app names from the user's prompt, matched against running apps.
+    private static func extractMentionedApps(from prompt: String, runningApps: [String]) -> [String] {
+        let pattern = "@([\\w\\s]+?)(?=\\s|$|@)"
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: []) else {
+            return []
+        }
+
+        let range = NSRange(prompt.startIndex..., in: prompt)
+        let matches = regex.matches(in: prompt, options: [], range: range)
+
+        return matches.compactMap { match in
+            guard let range = Range(match.range(at: 1), in: prompt) else { return nil }
+            let mentionedName = String(prompt[range]).trimmingCharacters(in: .whitespaces)
+
+            if let matchedApp = runningApps.first(where: { $0.lowercased() == mentionedName.lowercased() }) {
+                return matchedApp
+            }
+            return nil
+        }
     }
 
     // MARK: - File Management

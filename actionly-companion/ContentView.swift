@@ -52,18 +52,6 @@ struct ContentView: View {
                 .transition(.opacity)
             }
         }
-        .onAppear{
-            let screenshotHelper = ScreenshotHelper()
-
-            Task {
-                do {
-                    let fileURL = try await screenshotHelper.captureAndSaveToCaches()
-                    print("Screenshot saved at:", fileURL.path)
-                } catch {
-                    print("Failed to capture screenshot:", error)
-                }
-            }
-        }
         .animation(.easeInOut(duration: 0.3), value: viewModel.currentState)
         .frame(width: 600, height: dynamicHeight)
         .background(

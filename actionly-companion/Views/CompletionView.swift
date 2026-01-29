@@ -14,7 +14,7 @@ struct CompletionView: View {
     var onAutoDismiss: (() -> Void)?
 
     /// Countdown for auto-dismiss (only on success)
-    @State private var countdown: Int = 2
+    @State private var countdown: Int = 1
 
     /// Timer for countdown
     @State private var timer: Timer?
@@ -46,12 +46,8 @@ struct CompletionView: View {
                 .multilineTextAlignment(.center)
                 .padding(.horizontal)
 
-            // Auto-dismiss countdown (only on success)
-            if success {
-                Text("Closing in \(countdown)...")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            } else {
+            // Auto-dismiss countdown (only on success)Í
+            if !success {
                 // Retry button on failure
                 Button(action: {
                     viewModel.reset()

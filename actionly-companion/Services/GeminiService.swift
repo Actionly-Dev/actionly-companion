@@ -44,7 +44,7 @@ class GeminiService {
         apiKey: String,
         targetApp: String?,
         runningApps: [String] = [],
-        screenshotData: Data? = nil,
+        screenshots: [LabeledScreenshot] = [],
         completion: @escaping (Result<[KeyboardShortcut], GeminiError>) -> Void
     ) {
         print("Calling Gemini REST API: \(model.rawValue)")
@@ -58,8 +58,15 @@ class GeminiService {
             return
         }
 
-        let systemPrompt = createSystemPrompt(targetApp: targetApp, runningApps: runningApps)
-        let fullPrompt = "\(systemPrompt)\n\nUser request: \(prompt)"
+        // Extract @mentioned apps from the prompt
+        let mentionedApps = extractMentionedApps(from: prompt, runningApps: runningApps)
+        print("📱 Mentioned apps: \(mentionedApps)")
+
+        let systemPrompt = createSystemPrompt(targetApp: targetApp, runningApps: runningApps, mentionedApps: mentionedApps)
+
+        // Clean @mentions from prompt for cleaner AI input (replace @AppName with just AppName)
+        let cleanedPrompt = cleanPromptMentions(prompt)
+        let fullPrompt = "\(systemPrompt)\n\nUser request: \(cleanedPrompt)"
 
         // Build the request URL - using v1 API for better model support
         let urlString = "https://generativelanguage.googleapis.com/v1/models/\(model.rawValue):generateContent?key=\(cleanedApiKey)"
@@ -79,17 +86,17 @@ class GeminiService {
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
-        // Build request body parts (text + optional image)
+        // Build request body parts (text + labeled images)
         var parts: [[String: Any]] = [["text": fullPrompt]]
 
-        // Add screenshot if provided
-        if let imageData = screenshotData {
-            let base64Image = imageData.base64EncodedString()
-            print("📸 Including screenshot (\(imageData.count) bytes)")
+        // Add labeled screenshots
+        for screenshot in screenshots {
+            print("📸 Including screenshot of \(screenshot.appName) (\(screenshot.imageData.count) bytes)")
+            parts.append(["text": "Screenshot of \(screenshot.appName):"])
             parts.append([
                 "inline_data": [
                     "mime_type": "image/png",
-                    "data": base64Image
+                    "data": screenshot.imageData.base64EncodedString()
                 ]
             ])
         }
@@ -214,8 +221,67 @@ class GeminiService {
         }
     }
 
-    private func createSystemPrompt(targetApp: String?, runningApps: [String]) -> String {
+    /// Extract @mentioned apps from the user's prompt
+    private func extractMentionedApps(from prompt: String, runningApps: [String]) -> [String] {
+        let pattern = "@([\\w\\s]+?)(?=\\s|$|@)"
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: []) else {
+            return []
+        }
+
+        let range = NSRange(prompt.startIndex..., in: prompt)
+        let matches = regex.matches(in: prompt, options: [], range: range)
+
+        return matches.compactMap { match in
+            guard let range = Range(match.range(at: 1), in: prompt) else { return nil }
+            let mentionedName = String(prompt[range]).trimmingCharacters(in: .whitespaces)
+
+            // Find matching running app (case-insensitive)
+            if let matchedApp = runningApps.first(where: { $0.lowercased() == mentionedName.lowercased() }) {
+                return matchedApp
+            }
+            return nil
+        }
+    }
+
+    /// Clean @mentions from prompt (replace @AppName with AppName)
+    private func cleanPromptMentions(_ prompt: String) -> String {
+        // Replace @AppName with AppName for cleaner AI input
+        let pattern = "@([\\w\\s]+?)(?=\\s|$|@)"
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: []) else {
+            return prompt
+        }
+
+        var result = prompt
+        let range = NSRange(prompt.startIndex..., in: prompt)
+        let matches = regex.matches(in: prompt, options: [], range: range).reversed()
+
+        for match in matches {
+            if let fullRange = Range(match.range, in: result),
+               let captureRange = Range(match.range(at: 1), in: result) {
+                let appName = String(result[captureRange])
+                result.replaceSubrange(fullRange, with: appName)
+            }
+        }
+
+        return result
+    }
+
+    private func createSystemPrompt(targetApp: String?, runningApps: [String], mentionedApps: [String] = []) -> String {
         let appContext = targetApp.map { "The user is currently in the \($0) application." } ?? ""
+
+        // Build mentioned apps context (user explicitly targeted these apps)
+        let mentionedAppsContext: String
+        if mentionedApps.isEmpty {
+            mentionedAppsContext = ""
+        } else {
+            mentionedAppsContext = """
+
+            USER EXPLICITLY MENTIONED THESE APPS (prioritize using these with SWITCH_APP):
+            \(mentionedApps.joined(separator: ", "))
+
+            The user used @mentions to specify which apps they want to work with. Make sure your workflow includes SWITCH_APP actions for these apps.
+            """
+        }
 
         // Build running apps context
         let runningAppsContext: String
@@ -235,9 +301,9 @@ class GeminiService {
         return """
         You are a macOS automation assistant. Convert user requests into keyboard shortcuts and application actions.
 
-        \(appContext)\(runningAppsContext)
+        \(appContext)\(mentionedAppsContext)\(runningAppsContext)
 
-        A screenshot of the current screen may be provided to give you visual context.
+        Screenshots of individual application windows may be provided to give you visual context. Each screenshot is labeled with the app name it belongs to. Use them to understand what the user sees in each app.
 
         CRITICAL RULES:
         1. Output ONLY valid JSON - no extra text before or after

@@ -6,6 +6,13 @@ import ImageIO
 import UniformTypeIdentifiers
 import os
 
+// MARK: - LabeledScreenshot
+
+/// A screenshot paired with the name of the app it belongs to.
+public struct LabeledScreenshot {
+    let appName: String
+    let imageData: Data
+}
 
 /// ScreenshotHelper
 ///
@@ -72,8 +79,115 @@ public final class ScreenshotHelper {
         return fileURL
     }
 
+    /// Captures the main display and returns PNG data (without saving to disk).
+    public func captureMainDisplayData() async throws -> Data {
+        let cgImage = try await captureEntireMainDisplay()
+        guard let data = pngData(from: cgImage) else {
+            throw ScreenshotError.cannotCreateImageDestination
+        }
+        return data
+    }
+
+    /// Captures individual window screenshots for the given app names.
+    ///
+    /// For each app name, finds its first on-screen window and captures it.
+    /// If no per-app windows are found, falls back to a full display capture.
+    ///
+    /// - Parameter appNames: The display names of applications to capture (e.g. "Safari", "Xcode").
+    /// - Returns: An array of labeled screenshots, one per captured window.
+    public func captureWindows(forApps appNames: [String]) async throws -> [LabeledScreenshot] {
+        let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+
+        var results: [LabeledScreenshot] = []
+
+        for appName in appNames {
+            // Find the first on-screen window belonging to this app (case-insensitive match)
+            guard let window = content.windows.first(where: {
+                $0.owningApplication?.applicationName.lowercased() == appName.lowercased()
+                    && $0.isOnScreen
+                    && $0.frame.width > 0
+                    && $0.frame.height > 0
+            }) else {
+                print("⚠️ No visible window found for \(appName)")
+                continue
+            }
+
+            do {
+                let cgImage = try await captureWindow(window)
+                if let data = pngData(from: cgImage) {
+                    results.append(LabeledScreenshot(appName: appName, imageData: data))
+                    print("📸 Captured window for \(appName) (\(data.count) bytes)")
+                }
+            } catch {
+                print("⚠️ Failed to capture window for \(appName): \(error.localizedDescription)")
+            }
+        }
+
+        // Fallback: if no per-app windows were captured, capture the full display
+        if results.isEmpty {
+            print("📸 No per-app windows captured, falling back to full display")
+            do {
+                let data = try await captureMainDisplayData()
+                results.append(LabeledScreenshot(appName: "Full Display", imageData: data))
+            } catch {
+                print("⚠️ Full display fallback also failed: \(error.localizedDescription)")
+            }
+        }
+
+        return results
+    }
+
     // MARK: - Private Methods
-    
+
+    /// Captures a single window as a CGImage using ScreenCaptureKit.
+    private func captureWindow(_ window: SCWindow) async throws -> CGImage {
+        let filter = SCContentFilter(desktopIndependentWindow: window)
+
+        let config = SCStreamConfiguration()
+        config.width = Int(window.frame.width)
+        config.height = Int(window.frame.height)
+        config.pixelFormat = kCVPixelFormatType_32BGRA
+        config.showsCursor = false
+        config.capturesAudio = false
+        config.minimumFrameInterval = CMTime(value: 1, timescale: 60)
+
+        let oneShotOutput = OneShotOutput()
+        let newStream = SCStream(filter: filter, configuration: config, delegate: nil)
+        try newStream.addStreamOutput(oneShotOutput, type: .screen, sampleHandlerQueue: outputQueue)
+
+        streamLock.withLock { stream in
+            stream = newStream
+        }
+
+        try await newStream.startCapture()
+        defer { stopCapture() }
+
+        let sampleBuffer = try await oneShotOutput.nextSampleBuffer(timeoutSeconds: 2.0)
+
+        guard let cgImage = sampleBuffer.makeCGImage() else {
+            throw ScreenshotError.couldNotConvertSampleBufferToImage
+        }
+        return cgImage
+    }
+
+    /// Converts a CGImage to PNG data in memory (without writing to disk).
+    private func pngData(from image: CGImage) -> Data? {
+        let mutableData = NSMutableData()
+        guard let destination = CGImageDestinationCreateWithData(
+            mutableData as CFMutableData,
+            UTType.png.identifier as CFString,
+            1,
+            nil
+        ) else {
+            return nil
+        }
+        CGImageDestinationAddImage(destination, image, nil)
+        guard CGImageDestinationFinalize(destination) else {
+            return nil
+        }
+        return mutableData as Data
+    }
+
     // Simple timestamp helper for filenames: yyyy-MM-dd_HH-mm-ss
     private static func timestampString() -> String {
         let formatter = DateFormatter()
