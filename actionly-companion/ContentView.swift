@@ -6,45 +6,28 @@
 //
 
 import SwiftUI
+import ScreenCaptureKit
 
 struct ContentView: View {
+    let viewModel: AppViewModel
     var onClose: () -> Void
-    @State private var viewModel = AppViewModel()
+    @State private var showPermissions = false
+    @State private var permissionsChecked = false
 
     var body: some View {
-        // Content based on current state
         Group {
-            switch viewModel.currentState {
-            case .input:
-                InputView(viewModel: viewModel)
-                    .transition(.opacity)
-
-            case .review:
-                ReviewView(viewModel: viewModel)
-                    .transition(.opacity)
-
-            case .completion(let success, let message):
-                CompletionView(
-                    viewModel: viewModel,
-                    success: success,
-                    message: message
-                )
+            if !permissionsChecked || showPermissions {
+                // Show permissions screen
+                PermissionsView(onPermissionsGranted: {
+                    showPermissions = false
+                })
                 .transition(.opacity)
+            } else {
+                // Show main content
+                mainContent
             }
         }
-        .onAppear{
-            let screenshotHelper = ScreenshotHelper()
-
-            Task {
-                do {
-                    let fileURL = try await screenshotHelper.captureAndSaveToCaches()
-                    print("Screenshot saved at:", fileURL.path)
-                } catch {
-                    print("Failed to capture screenshot:", error)
-                }
-            }
-        }
-        .animation(.easeInOut(duration: 0.3), value: viewModel.currentState)
+        .animation(.easeInOut(duration: 0.3), value: showPermissions)
         .frame(width: 600, height: dynamicHeight)
         .background(
             RoundedRectangle(cornerRadius: 16)
@@ -57,11 +40,65 @@ struct ContentView: View {
         )
         .shadow(color: .black.opacity(0.4), radius: 30, x: 0, y: 15)
         .animation(.easeInOut(duration: 0.3), value: dynamicHeight)
+        .task {
+            await checkPermissionsOnLaunch()
+        }
+    }
+
+    @ViewBuilder
+    private var mainContent: some View {
+        // Content based on current state
+        Group {
+            switch viewModel.currentState {
+            case .input:
+                InputView(viewModel: viewModel)
+                    .transition(.opacity)
+
+            case .review:
+                ReviewView(viewModel: viewModel)
+                    .transition(.opacity)
+
+            case .executing:
+                if let session = viewModel.executionSession {
+                    ExecutionView(
+                        session: session,
+                        actions: viewModel.parsedActions,
+                        onStop: {
+                            viewModel.stopExecution()
+                        },
+                        onDismiss: {
+                            viewModel.finishExecution()
+                        }
+                    )
+                    .transition(.opacity)
+                }
+
+            case .completion(let success, let message):
+                CompletionView(
+                    viewModel: viewModel,
+                    success: success,
+                    message: message,
+                    onAutoDismiss: {
+                        // Hide window and reset for next time
+                        viewModel.reset()
+                        onClose()
+                    }
+                )
+                .transition(.opacity)
+            }
+        }
+        .animation(.easeInOut(duration: 0.3), value: viewModel.currentState)
         .onExitCommand {
             // Handle ESC key
-            if viewModel.currentState == .input && !viewModel.isProcessing {
-                onClose()
-            } else {
+            switch viewModel.currentState {
+            case .input:
+                if !viewModel.isProcessing {
+                    onClose()
+                }
+            case .executing:
+                // Stop execution on ESC
+                viewModel.stopExecution()
+            case .review, .completion:
                 viewModel.cancelExecution()
             }
         }
@@ -69,13 +106,45 @@ struct ContentView: View {
 
     // Dynamic height based on current view
     private var dynamicHeight: CGFloat {
+        if !permissionsChecked || showPermissions {
+            return 550 // Height for permissions view
+        }
+
         switch viewModel.currentState {
         case .input:
             return 300
         case .review:
             return 450
+        case .executing:
+            return 500
         case .completion:
             return 300
+        }
+    }
+
+    private func checkPermissionsOnLaunch() async {
+        // Check accessibility
+        let hasAccessibility = ShortcutExecutor.shared.checkAccessibilityPermissions()
+
+        // Check screen recording
+        let hasScreenRecording = await checkScreenRecordingPermission()
+
+        // Update state
+        await MainActor.run {
+            permissionsChecked = true
+            showPermissions = !hasAccessibility || !hasScreenRecording
+        }
+    }
+
+    private func checkScreenRecordingPermission() async -> Bool {
+        do {
+            let content = try await SCShareableContent.excludingDesktopWindows(
+                false,
+                onScreenWindowsOnly: true
+            )
+            return !content.displays.isEmpty
+        } catch {
+            return false
         }
     }
 }
@@ -88,6 +157,8 @@ extension AppState: Equatable {
             return true
         case (.review, .review):
             return true
+        case (.executing, .executing):
+            return true
         case (.completion(let lSuccess, let lMessage), .completion(let rSuccess, let rMessage)):
             return lSuccess == rSuccess && lMessage == rMessage
         default:
@@ -97,5 +168,5 @@ extension AppState: Equatable {
 }
 
 #Preview {
-    ContentView(onClose: {})
+    ContentView(viewModel: AppViewModel(), onClose: {})
 }

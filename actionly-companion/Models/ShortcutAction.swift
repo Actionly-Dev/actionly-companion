@@ -8,11 +8,46 @@
 import Foundation
 import Carbon
 
-// Represents an executable shortcut action
-enum ShortcutAction {
+// MARK: - Application Target
+/// Represents a target application for an action
+struct ApplicationTarget: Equatable {
+    let bundleIdentifier: String?
+    let name: String
+
+    /// Create from app name (bundle ID will be resolved at runtime)
+    static func named(_ name: String) -> ApplicationTarget {
+        ApplicationTarget(bundleIdentifier: nil, name: name)
+    }
+
+    /// Create from bundle identifier
+    static func bundleId(_ id: String, name: String) -> ApplicationTarget {
+        ApplicationTarget(bundleIdentifier: id, name: name)
+    }
+}
+
+// MARK: - Shortcut Action
+/// Represents an executable shortcut action
+enum ShortcutAction: Equatable {
     case keyPress(key: String, modifiers: [ModifierKey])
     case typeText(String)
     case delay(milliseconds: Int)
+    case switchApplication(target: ApplicationTarget)
+
+    /// Human-readable description of the action
+    var displayDescription: String {
+        switch self {
+        case .keyPress(let key, let modifiers):
+            let modifierStr = modifiers.map { $0.rawValue }.joined()
+            return "\(modifierStr)\(key.uppercased())"
+        case .typeText(let text):
+            let preview = text.count > 20 ? String(text.prefix(20)) + "..." : text
+            return "Type: \"\(preview)\""
+        case .delay(let ms):
+            return "Wait \(ms)ms"
+        case .switchApplication(let target):
+            return "Switch to \(target.name)"
+        }
+    }
 }
 
 // Modifier keys for keyboard shortcuts
@@ -36,10 +71,29 @@ enum ModifierKey: String {
     }
 }
 
-// Helper to parse keyboard shortcuts from strings
+// MARK: - Parsing
+/// Helper to parse keyboard shortcuts from strings
 extension ShortcutAction {
     static func parse(from keyString: String, description: String = "") -> ShortcutAction? {
         let trimmed = keyString.trimmingCharacters(in: .whitespaces)
+
+        // Check if it's an app switch command
+        if trimmed.uppercased().hasPrefix("SWITCH_APP:") {
+            let appName = String(trimmed.dropFirst("SWITCH_APP:".count))
+                .trimmingCharacters(in: .whitespaces)
+            guard !appName.isEmpty else { return nil }
+            return .switchApplication(target: .named(appName))
+        }
+
+        // Check if it's a delay command
+        if trimmed.uppercased().hasPrefix("DELAY:") {
+            let msString = String(trimmed.dropFirst("DELAY:".count))
+                .trimmingCharacters(in: .whitespaces)
+            if let ms = Int(msString) {
+                return .delay(milliseconds: ms)
+            }
+            return nil
+        }
 
         // Check if it's a text input with TEXT: prefix
         if trimmed.uppercased().hasPrefix("TEXT:") {

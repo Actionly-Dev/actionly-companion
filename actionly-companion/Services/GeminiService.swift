@@ -43,25 +43,30 @@ class GeminiService {
         model: AIModel,
         apiKey: String,
         targetApp: String?,
-        screenshotData: Data? = nil,
+        runningApps: [String] = [],
+        screenshots: [LabeledScreenshot] = [],
         completion: @escaping (Result<[KeyboardShortcut], GeminiError>) -> Void
     ) {
-        print("🌐 Calling Gemini REST API: \(model.rawValue)")
-        print("🔑 API Key length: \(apiKey.count) characters")
+        print("Calling Gemini REST API: \(model.rawValue)")
+        print("API Key length: \(apiKey.count) characters")
 
         // Clean the API key (remove any whitespace or newlines)
         let cleanedApiKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        print("🔑 Cleaned API Key length: \(cleanedApiKey.count) characters")
-        print("🔑 First 10 chars: \(String(cleanedApiKey.prefix(10)))...")
 
         guard !cleanedApiKey.isEmpty else {
             completion(.failure(.invalidAPIKey))
             return
         }
 
-        let systemPrompt = createSystemPrompt(targetApp: targetApp)
-        let fullPrompt = "\(systemPrompt)\n\nUser request: \(prompt)"
+        // Extract @mentioned apps from the prompt
+        let mentionedApps = extractMentionedApps(from: prompt, runningApps: runningApps)
+        print("📱 Mentioned apps: \(mentionedApps)")
+
+        let systemPrompt = createSystemPrompt(targetApp: targetApp, runningApps: runningApps, mentionedApps: mentionedApps)
+
+        // Clean @mentions from prompt for cleaner AI input (replace @AppName with just AppName)
+        let cleanedPrompt = cleanPromptMentions(prompt)
+        let fullPrompt = "\(systemPrompt)\n\nUser request: \(cleanedPrompt)"
 
         // Build the request URL - using v1 API for better model support
         let urlString = "https://generativelanguage.googleapis.com/v1/models/\(model.rawValue):generateContent?key=\(cleanedApiKey)"
@@ -81,17 +86,17 @@ class GeminiService {
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
-        // Build request body parts (text + optional image)
+        // Build request body parts (text + labeled images)
         var parts: [[String: Any]] = [["text": fullPrompt]]
 
-        // Add screenshot if provided
-        if let imageData = screenshotData {
-            let base64Image = imageData.base64EncodedString()
-            print("📸 Including screenshot (\(imageData.count) bytes)")
+        // Add labeled screenshots
+        for screenshot in screenshots {
+            print("📸 Including screenshot of \(screenshot.appName) (\(screenshot.imageData.count) bytes)")
+            parts.append(["text": "Screenshot of \(screenshot.appName):"])
             parts.append([
                 "inline_data": [
                     "mime_type": "image/png",
-                    "data": base64Image
+                    "data": screenshot.imageData.base64EncodedString()
                 ]
             ])
         }
@@ -216,15 +221,113 @@ class GeminiService {
         }
     }
 
-    private func createSystemPrompt(targetApp: String?) -> String {
+    /// Extract @mentioned apps from the user's prompt
+    private func extractMentionedApps(from prompt: String, runningApps: [String]) -> [String] {
+        // Pattern captures @mentions: @word or @word word word (until end, space+lowercase, or another @)
+        // This allows "Microsoft Excel" but stops at " to" in "@Excel to @Word"
+        let pattern = "@([\\w\\s]+?)(?=\\s+(?:[a-z]|@)|$|@)"
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: []) else {
+            return []
+        }
+
+        let range = NSRange(prompt.startIndex..., in: prompt)
+        let matches = regex.matches(in: prompt, options: [], range: range)
+
+        return matches.compactMap { match in
+            guard let range = Range(match.range(at: 1), in: prompt) else { return nil }
+            let mentionedName = String(prompt[range]).trimmingCharacters(in: .whitespaces)
+
+            // Find matching running app (case-insensitive)
+            if let matchedApp = runningApps.first(where: { $0.lowercased() == mentionedName.lowercased() }) {
+                return matchedApp
+            }
+            return nil
+        }
+    }
+
+    /// Clean @mentions from prompt (replace @AppName with AppName)
+    private func cleanPromptMentions(_ prompt: String) -> String {
+        // Replace @AppName with AppName for cleaner AI input
+        let pattern = "@([\\w\\s]+?)(?=\\s|$|@)"
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: []) else {
+            return prompt
+        }
+
+        var result = prompt
+        let range = NSRange(prompt.startIndex..., in: prompt)
+        let matches = regex.matches(in: prompt, options: [], range: range).reversed()
+
+        for match in matches {
+            if let fullRange = Range(match.range, in: result),
+               let captureRange = Range(match.range(at: 1), in: result) {
+                let appName = String(result[captureRange])
+                result.replaceSubrange(fullRange, with: appName)
+            }
+        }
+
+        return result
+    }
+
+    private func createSystemPrompt(targetApp: String?, runningApps: [String], mentionedApps: [String] = []) -> String {
         let appContext = targetApp.map { "The user is currently in the \($0) application." } ?? ""
 
+        // Build mentioned apps context (user explicitly targeted these apps)
+        let mentionedAppsContext: String
+        if mentionedApps.isEmpty {
+            mentionedAppsContext = ""
+        } else {
+            mentionedAppsContext = """
+
+            USER EXPLICITLY MENTIONED THESE APPS (prioritize using these with SWITCH_APP):
+            \(mentionedApps.joined(separator: ", "))
+
+            The user used @mentions to specify which apps they want to work with. Make sure your workflow includes SWITCH_APP actions for these apps.
+            """
+        }
+
+        // Build running apps context
+        let runningAppsContext: String
+        if runningApps.isEmpty {
+            runningAppsContext = ""
+        } else {
+            let appsList = runningApps.joined(separator: ", ")
+            runningAppsContext = """
+
+            CURRENTLY RUNNING APPLICATIONS (use exact names for SWITCH_APP):
+            \(appsList)
+
+            IMPORTANT: Only use SWITCH_APP with applications from this list. If a required app is not running, inform the user in the description that the app needs to be opened first.
+            """
+        }
+
         return """
-        You are a macOS automation assistant. Convert user requests into keyboard shortcuts.
+        You are Actionly, a macOS automation assistant that helps users perform quick tasks through keyboard shortcuts and app switching.
 
-        \(appContext)
+        ## WHAT ACTIONLY IS
+        Actionly is a productivity tool that lets users automate repetitive tasks across macOS applications. Users invoke it with a keyboard shortcut, describe what they want (e.g., "copy text from Notes to Excel"), and Actionly generates and executes the necessary keyboard shortcuts and app switches. Think of it as a smart macro recorder that understands natural language.
 
-        A screenshot of the current screen may be provided to give you visual context.
+        ## YOUR ROLE
+        Convert the user's natural language request into a sequence of keyboard shortcuts and app switches that accomplish their goal. Be efficient, practical, and use the simplest solution that works.
+
+        ## CONTEXT
+        \(appContext)\(mentionedAppsContext)\(runningAppsContext)
+
+        Screenshots of individual application windows are provided to give you visual context. Each screenshot is labeled with its app name. Use them to understand what the user sees and to make informed decisions about the workflow.
+
+        ## QUALITY GUIDELINES
+        - **Simple is better**: Use native macOS shortcuts (⌘C, ⌘V, ⌘A) when possible
+        - **Minimize actions**: Don't over-engineer - if it takes 3 steps, don't use 10
+        - **Trust the apps**: Assume standard behavior (⌘V works, dialogs appear as expected)
+        - **Be practical**: Users want quick automation, not perfect edge-case handling
+        - **No unnecessary delays**: Only add DELAY if apps need time to load/respond
+        - **Switch apps explicitly**: Always use SWITCH_APP before sending keys to a different app
+
+        ## COMMON SCENARIOS
+        - "Copy from A to B": Switch to A, select all, copy, switch to B, paste
+        - "Save this file": ⌘S (don't overthink it)
+        - "Close all windows": ⌘W repeated or ⌘Q to quit the app
+        - "Create new document": ⌘N
+        - "Search for text": ⌘F, type search term
 
         CRITICAL RULES:
         1. Output ONLY valid JSON - no extra text before or after
@@ -242,23 +345,51 @@ class GeminiService {
           ]
         }
 
-        Keyboard symbols:
-        - Command: ⌘
-        - Shift: ⇧
-        - Option: ⌥
-        - Control: ⌃
-        - Return/Enter: ↵
-        - For typing text: prefix keys with "TEXT:" followed by the text to type
+        AVAILABLE ACTION TYPES:
 
-        Examples:
-        - Copy: {"name": "Copy", "keys": "⌘ C", "description": "Copy selected text"}
-        - New tab: {"name": "New Tab", "keys": "⌘ T", "description": "Open new browser tab"}
-        - Type hello: {"name": "Type Text", "keys": "TEXT:hello", "description": "Types the word hello"}
+        1. Keyboard Shortcuts (modifier + key):
+           - Command: ⌘
+           - Shift: ⇧
+           - Option: ⌥
+           - Control: ⌃
+           - Return/Enter: ↵
+           Examples: "⌘ C" (copy), "⌘⇧ N" (new folder), "⌃ Tab" (switch tab)
 
-        Rules:
+        2. Type Text (for typing strings):
+           - Format: "TEXT:your text here"
+           - Example: {"name": "Type filename", "keys": "TEXT:report.docx", "description": "Types the filename"}
+
+        3. Switch Application (IMPORTANT for multi-app workflows):
+           - Format: "SWITCH_APP:Application Name"
+           - Use the EXACT application name from the running apps list
+           - Example: {"name": "Switch to Excel", "keys": "SWITCH_APP:Microsoft Excel", "description": "Activate Excel"}
+
+        4. Delay (for waiting):
+           - Format: "DELAY:milliseconds"
+           - Example: {"name": "Wait", "keys": "DELAY:500", "description": "Wait 500ms for app to respond"}
+
+        MULTI-APPLICATION WORKFLOW RULES:
+        - When a task involves multiple applications, ALWAYS include SWITCH_APP actions
+        - Add SWITCH_APP before performing actions in a different application
+        - The workflow should explicitly switch to each app before sending keystrokes to it
+        - Only switch to apps that are in the running apps list
+
+        EXAMPLE MULTI-APP WORKFLOW (Copy from Word to Excel):
+        {
+          "shortcuts": [
+            {"name": "Switch to Word", "keys": "SWITCH_APP:Microsoft Word", "description": "Activate Word"},
+            {"name": "Select All", "keys": "⌘ A", "description": "Select all text in Word"},
+            {"name": "Copy", "keys": "⌘ C", "description": "Copy selected text"},
+            {"name": "Switch to Excel", "keys": "SWITCH_APP:Microsoft Excel", "description": "Activate Excel"},
+            {"name": "Paste", "keys": "⌘ V", "description": "Paste into Excel"}
+          ]
+        }
+
+        GENERAL RULES:
         - Use standard macOS shortcuts when possible
-        - Break complex tasks into simple steps
+        - Break complex tasks into simple, sequential steps
         - Keep descriptions brief and clear
+        - For multi-app tasks, always include explicit app switches
         - Output pure JSON only
         """
     }

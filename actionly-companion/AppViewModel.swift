@@ -18,6 +18,7 @@ struct KeyboardShortcut: Identifiable {
 enum AppState {
     case input
     case review
+    case executing
     case completion(success: Bool, message: String)
 }
 
@@ -29,6 +30,12 @@ class AppViewModel {
     var attachedFiles: [URL] = []
     var generatedShortcuts: [KeyboardShortcut] = []
     var isProcessing: Bool = false
+
+    /// The parsed actions ready for execution
+    var parsedActions: [ShortcutAction] = []
+
+    /// The execution session for the current execution
+    var executionSession: ExecutionSession?
 
     private let settings = SettingsManager.shared
 
@@ -47,19 +54,45 @@ class AppViewModel {
         // Get the target application name for context
         let targetApp = ApplicationTracker.shared.previousApplication?.localizedName
 
-        // Capture screenshot asynchronously, then call API
-        Task {
-            var screenshotData: Data? = nil
+        // Get list of currently running applications
+        let runningApps = WindowManager.shared.getRunningApplications()
+            .map { $0.localizedName }
 
-            // Try to capture screenshot (may fail if Screen Recording permission not granted)
+        print("🔍 Running apps: \(runningApps)")
+        print("🔍 User prompt: \(userPrompt)")
+
+        // Build list of apps to capture screenshots for
+        let mentionedApps = Self.extractMentionedApps(from: userPrompt, runningApps: runningApps)
+        print("🔍 Extracted mentioned apps: \(mentionedApps)")
+        var appsToCapture = mentionedApps
+
+        // Include the previously-active app (the app the user was in before opening Actionly)
+        if let previousAppName = targetApp,
+           !appsToCapture.contains(where: { $0.lowercased() == previousAppName.lowercased() }) {
+            appsToCapture.append(previousAppName)
+        }
+
+        print("📸 Apps to capture: \(appsToCapture)")
+
+        // Capture per-app window screenshots, then call API
+        Task {
+            var screenshots: [LabeledScreenshot] = []
+
             do {
                 let screenshotHelper = ScreenshotHelper()
-                let screenshotURL = try await screenshotHelper.captureAndSaveToCaches()
-                screenshotData = try Data(contentsOf: screenshotURL)
-                print("📸 Screenshot captured: \(screenshotURL.path)")
+                if appsToCapture.isEmpty {
+                    // No specific apps — capture full display
+                    let data = try await screenshotHelper.captureMainDisplayData()
+                    screenshots = [LabeledScreenshot(appName: "Full Display", imageData: data)]
+                    print("📸 Captured full display (\(data.count) bytes)")
+                } else {
+                    print("📸 About to capture screenshots for: \(appsToCapture)")
+                    screenshots = try await screenshotHelper.captureWindows(forApps: appsToCapture)
+                    print("📸 Captured \(screenshots.count) app windows: \(screenshots.map { $0.appName })")
+                }
             } catch {
-                print("⚠️ Could not capture screenshot: \(error.localizedDescription)")
-                // Continue without screenshot - not critical
+                print("Could not capture screenshots: \(error.localizedDescription)")
+                // Continue without screenshots - not critical
             }
 
             // Call Gemini API to generate shortcuts
@@ -68,7 +101,8 @@ class AppViewModel {
                 model: settings.selectedModel,
                 apiKey: settings.apiToken,
                 targetApp: targetApp,
-                screenshotData: screenshotData
+                runningApps: runningApps,
+                screenshots: screenshots
             ) { [weak self] result in
                 DispatchQueue.main.async {
                     guard let self = self else { return }
@@ -81,6 +115,8 @@ class AppViewModel {
                             self.currentState = .completion(success: false, message: "No shortcuts were generated. Try rephrasing your request.")
                         } else {
                             self.generatedShortcuts = shortcuts
+                            // Pre-parse actions for the execution view
+                            self.parsedActions = shortcuts.compactMap { $0.toAction() }
                             self.currentState = .review
                         }
 
@@ -93,37 +129,110 @@ class AppViewModel {
     }
 
     func executeShortcuts() {
-        isProcessing = true
-
-        // Convert KeyboardShortcuts to ShortcutActions
-        let actions = generatedShortcuts.compactMap { $0.toAction() }
-
-        guard !actions.isEmpty else {
+        guard !parsedActions.isEmpty else {
             currentState = .completion(success: false, message: "No valid actions to execute")
-            isProcessing = false
             return
         }
 
-        // Execute the shortcuts using ShortcutExecutor
-        ShortcutExecutor.shared.execute(actions) { [weak self] success, message in
-            DispatchQueue.main.async {
-                self?.currentState = .completion(success: success, message: message)
-                self?.isProcessing = false
-            }
+        // Create a new execution session
+        let session = ExecutionSession()
+        self.executionSession = session
+
+        // Transition to executing state
+        currentState = .executing
+        isProcessing = true
+
+        // Execute the shortcuts using the modern async API
+        Task { @MainActor in
+            let result = await ShortcutExecutor.shared.executeAsync(
+                parsedActions,
+                session: session,
+                settings: settings.executionSettings,
+                callbacks: ExecutionCallbacks(
+                    onStart: {
+                        print("Execution started")
+                    },
+                    onStepStart: { index, action in
+                        print("Starting step \(index + 1): \(action.displayDescription)")
+                    },
+                    onStepComplete: { index in
+                        print("Completed step \(index + 1)")
+                    },
+                    onCancelled: { index in
+                        print("Execution cancelled at step \(index + 1)")
+                    },
+                    onComplete: { success, message in
+                        print("Execution complete: \(success) - \(message)")
+                    }
+                )
+            )
+
+            // Note: We don't automatically transition to completion anymore
+            // The ExecutionView handles the "Done" button which calls finishExecution
+            self.isProcessing = false
         }
     }
 
+    /// Stop the current execution
+    func stopExecution() {
+        executionSession?.cancel()
+    }
+
+    /// Finish and transition to completion (called from ExecutionView)
+    func finishExecution() {
+        let success = executionSession?.error == nil
+        let message = executionSession?.error ?? "Successfully executed \(parsedActions.count) actions"
+
+        currentState = .completion(success: success, message: message)
+        executionSession = nil
+    }
+
     func cancelExecution() {
+        executionSession?.cancel()
+        executionSession = nil
         currentState = .input
         generatedShortcuts = []
+        parsedActions = []
     }
 
     func reset() {
         userPrompt = ""
         attachedFiles = []
         generatedShortcuts = []
+        parsedActions = []
+        executionSession = nil
         currentState = .input
         isProcessing = false
+    }
+
+    // MARK: - Mention Extraction
+
+    /// Extract @mentioned app names from the user's prompt, matched against running apps.
+    private static func extractMentionedApps(from prompt: String, runningApps: [String]) -> [String] {
+        // Pattern captures @mentions: @word or @word word word (until end, space+lowercase, or another @)
+        // This allows "Microsoft Excel" but stops at " to" in "@Excel to @Word"
+        let pattern = "@([\\w\\s]+?)(?=\\s+(?:[a-z]|@)|$|@)"
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: []) else {
+            print("❌ Failed to create regex")
+            return []
+        }
+
+        let range = NSRange(prompt.startIndex..., in: prompt)
+        let matches = regex.matches(in: prompt, options: [], range: range)
+        print("🔍 Found \(matches.count) @mentions in prompt")
+
+        return matches.compactMap { match in
+            guard let range = Range(match.range(at: 1), in: prompt) else { return nil }
+            let mentionedName = String(prompt[range]).trimmingCharacters(in: .whitespaces)
+            print("🔍 Processing @mention: '\(mentionedName)'")
+
+            if let matchedApp = runningApps.first(where: { $0.lowercased() == mentionedName.lowercased() }) {
+                print("✅ Matched '\(mentionedName)' to running app '\(matchedApp)'")
+                return matchedApp
+            }
+            print("❌ No running app matches '\(mentionedName)'")
+            return nil
+        }
     }
 
     // MARK: - File Management
@@ -134,16 +243,5 @@ class AppViewModel {
     func removeFile(at index: Int) {
         guard index < attachedFiles.count else { return }
         attachedFiles.remove(at: index)
-    }
-
-    // MARK: - Mock Data (Remove later)
-    private func generateMockShortcuts() -> [KeyboardShortcut] {
-        return [
-            KeyboardShortcut(name: "Open Finder", keys: "⌘ Space", description: "Opens Spotlight to search for Finder"),
-            KeyboardShortcut(name: "Type 'Finder'", keys: "Text Input", description: "Types 'Finder' into search"),
-            KeyboardShortcut(name: "Press Enter", keys: "↵", description: "Confirms selection and opens Finder"),
-            KeyboardShortcut(name: "New Folder", keys: "⌘⇧ N", description: "Creates a new folder"),
-            KeyboardShortcut(name: "Type Folder Name", keys: "Text Input", description: "Types the folder name")
-        ]
     }
 }

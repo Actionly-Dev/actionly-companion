@@ -33,6 +33,7 @@ class KeyablePanel: NSPanel {
 class AppDelegate: NSObject, NSApplicationDelegate {
     var window: KeyablePanel?
     var eventMonitor: Any?
+    let appViewModel = AppViewModel()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Create the floating panel without title bar
@@ -47,7 +48,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         panel.isFloatingPanel = true
         panel.level = .floating
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-        panel.isMovableByWindowBackground = false
+        panel.isMovableByWindowBackground = true
         panel.backgroundColor = .clear
         panel.isOpaque = false
         panel.hasShadow = false
@@ -56,9 +57,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         panel.acceptsMouseMovedEvents = true
 
         // Set the SwiftUI content
-        let contentView = ContentView(onClose: { [weak self] in
-            self?.hideWindow()
-        })
+        let contentView = ContentView(
+            viewModel: appViewModel,
+            onClose: { [weak self] in
+                self?.hideWindow()
+            }
+        )
         panel.contentView = NSHostingView(rootView: contentView)
 
         // Center the window
@@ -74,6 +78,28 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Show the window initially
         showWindow()
+
+        // Register for URL events
+        print("🔧 Registering Apple Event handler for URL scheme")
+        NSAppleEventManager.shared().setEventHandler(
+            self,
+            andSelector: #selector(handleGetURLEvent(_:replyEvent:)),
+            forEventClass: AEEventClass(kInternetEventClass),
+            andEventID: AEEventID(kAEGetURL)
+        )
+        print("✅ Apple Event handler registered")
+    }
+
+    @objc func handleGetURLEvent(_ event: NSAppleEventDescriptor, replyEvent: NSAppleEventDescriptor) {
+        print("🔔 Apple Event handler called!")
+        if let urlString = event.paramDescriptor(forKeyword: keyDirectObject)?.stringValue {
+            print("📎 Received URL via Apple Event: \(urlString)")
+            if let url = URL(string: urlString) {
+                handleURL(url)
+            }
+        } else {
+            print("⚠️ No URL string found in Apple Event")
+        }
     }
 
     func setupGlobalHotkey() {
@@ -131,5 +157,26 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func hideWindow() {
         window?.orderOut(nil)
+    }
+
+    // MARK: - URL Scheme Handling
+    func application(_ application: NSApplication, open urls: [URL]) {
+        for url in urls {
+            handleURL(url)
+        }
+    }
+
+    private func handleURL(_ url: URL) {
+        print("📎 Received URL: \(url.absoluteString)")
+
+        // Expected format: actionly://trigger
+        guard url.scheme == "actionly" else {
+            print("⚠️ Invalid URL scheme: \(url.scheme ?? "nil")")
+            return
+        }
+
+        // Simply show the window - user will enter their prompt manually
+        print("✅ Triggering actionly-companion window")
+        showWindow()
     }
 }

@@ -14,6 +14,7 @@ class SettingsManager {
 
     private let selectedModelKey = "selectedAIModel"
     private let apiTokenKey = "apiToken"
+    private let executionSpeedKey = "executionSpeed"
 
     var selectedModel: AIModel {
         didSet {
@@ -21,20 +22,31 @@ class SettingsManager {
         }
     }
 
+    var executionSpeed: ExecutionSpeed {
+        didSet {
+            UserDefaults.standard.set(executionSpeed.rawValue, forKey: executionSpeedKey)
+        }
+    }
+
     var apiToken: String {
         get {
             let token = KeychainHelper.shared.getToken(for: apiTokenKey) ?? ""
-            print("🔑 Retrieved API token from keychain (length: \(token.count))")
+            print("Retrieved API token from keychain (length: \(token.count))")
             return token
         }
         set {
-            print("💾 Saving API token to keychain (length: \(newValue.count))")
+            print("Saving API token to keychain (length: \(newValue.count))")
             if newValue.isEmpty {
                 try? KeychainHelper.shared.deleteToken(for: apiTokenKey)
             } else {
                 try? KeychainHelper.shared.saveToken(newValue, for: apiTokenKey)
             }
         }
+    }
+
+    /// Get the current execution settings based on speed preset
+    var executionSettings: ExecutionSettings {
+        return executionSpeed.executionSettings
     }
 
     private init() {
@@ -45,6 +57,14 @@ class SettingsManager {
         } else {
             self.selectedModel = AppSettings.defaultModel
         }
+
+        // Load execution speed from UserDefaults
+        if let savedSpeed = UserDefaults.standard.string(forKey: executionSpeedKey),
+           let speed = ExecutionSpeed(rawValue: savedSpeed) {
+            self.executionSpeed = speed
+        } else {
+            self.executionSpeed = AppSettings.defaultExecutionSpeed
+        }
     }
 
     var hasValidSettings: Bool {
@@ -53,6 +73,7 @@ class SettingsManager {
 
     func clearSettings() {
         selectedModel = AppSettings.defaultModel
+        executionSpeed = AppSettings.defaultExecutionSpeed
         apiToken = ""
     }
 }

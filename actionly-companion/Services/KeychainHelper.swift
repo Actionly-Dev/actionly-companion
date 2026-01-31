@@ -22,7 +22,9 @@ class KeychainHelper {
 
     // Save API token to Keychain
     func saveToken(_ token: String, for key: String) throws {
-        let data = token.data(using: .utf8)!
+        guard let data = token.data(using: .utf8) else {
+            throw KeychainError.unknown(errSecParam)
+        }
 
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
