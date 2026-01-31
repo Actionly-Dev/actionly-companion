@@ -33,6 +33,7 @@ class KeyablePanel: NSPanel {
 class AppDelegate: NSObject, NSApplicationDelegate {
     var window: KeyablePanel?
     var eventMonitor: Any?
+    let appViewModel = AppViewModel()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Create the floating panel without title bar
@@ -56,9 +57,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         panel.acceptsMouseMovedEvents = true
 
         // Set the SwiftUI content
-        let contentView = ContentView(onClose: { [weak self] in
-            self?.hideWindow()
-        })
+        let contentView = ContentView(
+            viewModel: appViewModel,
+            onClose: { [weak self] in
+                self?.hideWindow()
+            }
+        )
         panel.contentView = NSHostingView(rootView: contentView)
 
         // Center the window

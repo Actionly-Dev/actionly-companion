@@ -58,8 +58,12 @@ class AppViewModel {
         let runningApps = WindowManager.shared.getRunningApplications()
             .map { $0.localizedName }
 
+        print("🔍 Running apps: \(runningApps)")
+        print("🔍 User prompt: \(userPrompt)")
+
         // Build list of apps to capture screenshots for
         let mentionedApps = Self.extractMentionedApps(from: userPrompt, runningApps: runningApps)
+        print("🔍 Extracted mentioned apps: \(mentionedApps)")
         var appsToCapture = mentionedApps
 
         // Include the previously-active app (the app the user was in before opening Actionly)
@@ -82,8 +86,9 @@ class AppViewModel {
                     screenshots = [LabeledScreenshot(appName: "Full Display", imageData: data)]
                     print("📸 Captured full display (\(data.count) bytes)")
                 } else {
+                    print("📸 About to capture screenshots for: \(appsToCapture)")
                     screenshots = try await screenshotHelper.captureWindows(forApps: appsToCapture)
-                    print("📸 Captured \(screenshots.count) app windows")
+                    print("📸 Captured \(screenshots.count) app windows: \(screenshots.map { $0.appName })")
                 }
             } catch {
                 print("Could not capture screenshots: \(error.localizedDescription)")
@@ -204,21 +209,28 @@ class AppViewModel {
 
     /// Extract @mentioned app names from the user's prompt, matched against running apps.
     private static func extractMentionedApps(from prompt: String, runningApps: [String]) -> [String] {
-        let pattern = "@([\\w\\s]+?)(?=\\s|$|@)"
+        // Pattern captures @mentions: @word or @word word word (until end, space+lowercase, or another @)
+        // This allows "Microsoft Excel" but stops at " to" in "@Excel to @Word"
+        let pattern = "@([\\w\\s]+?)(?=\\s+(?:[a-z]|@)|$|@)"
         guard let regex = try? NSRegularExpression(pattern: pattern, options: []) else {
+            print("❌ Failed to create regex")
             return []
         }
 
         let range = NSRange(prompt.startIndex..., in: prompt)
         let matches = regex.matches(in: prompt, options: [], range: range)
+        print("🔍 Found \(matches.count) @mentions in prompt")
 
         return matches.compactMap { match in
             guard let range = Range(match.range(at: 1), in: prompt) else { return nil }
             let mentionedName = String(prompt[range]).trimmingCharacters(in: .whitespaces)
+            print("🔍 Processing @mention: '\(mentionedName)'")
 
             if let matchedApp = runningApps.first(where: { $0.lowercased() == mentionedName.lowercased() }) {
+                print("✅ Matched '\(mentionedName)' to running app '\(matchedApp)'")
                 return matchedApp
             }
+            print("❌ No running app matches '\(mentionedName)'")
             return nil
         }
     }

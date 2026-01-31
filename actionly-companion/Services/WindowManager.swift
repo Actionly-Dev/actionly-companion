@@ -120,13 +120,28 @@ class WindowManager {
     /// Activate an application and wait for it to become frontmost
     func activateApplication(_ app: NSRunningApplication, timeout: TimeInterval) async throws {
         let appName = app.localizedName ?? "Unknown"
-        print("Switching to application: \(appName)")
+        let startTime = Date()
+        print("⏱️ Switching to application: \(appName)")
 
         // If app is hidden, unhide it first
         if app.isHidden {
+            print("⏱️ App is hidden, unhiding...")
             app.unhide()
             // Small delay to let unhide complete
             try? await Task.sleep(nanoseconds: 100_000_000) // 100ms
+        }
+
+        let preUnminimizeTime = Date()
+        // Check if any windows are minimized and un-minimize them if needed
+        // This handles the case where windows are minimized to the Dock
+        let hadMinimizedWindows = unminimizeWindows(for: appName)
+        let unminimizeTime = Date().timeIntervalSince(preUnminimizeTime)
+        print("⏱️ Unminimize check took: \(Int(unminimizeTime * 1000))ms (had minimized: \(hadMinimizedWindows))")
+
+        // Only wait if we actually un-minimized windows
+        if hadMinimizedWindows {
+            print("⏱️ Waiting 200ms after un-minimizing...")
+            try? await Task.sleep(nanoseconds: 200_000_000) // 200ms
         }
 
         // Attempt to activate with all options to handle minimized/background apps
@@ -137,14 +152,59 @@ class WindowManager {
             throw WindowManagerError.activationFailed(appName)
         }
 
+        let preWaitTime = Date()
         // Wait for the app to become active
         let success = await waitForActivation(app: app, timeout: timeout)
+        let waitTime = Date().timeIntervalSince(preWaitTime)
+        print("⏱️ Wait for activation took: \(Int(waitTime * 1000))ms")
 
         if !success {
             throw WindowManagerError.activationTimeout(appName)
         }
 
-        print("Successfully switched to: \(appName)")
+        let totalTime = Date().timeIntervalSince(startTime)
+        print("✅ Successfully switched to: \(appName) in \(Int(totalTime * 1000))ms")
+    }
+
+    /// Un-minimize all windows for an application using AppleScript
+    /// This is necessary because NSRunningApplication.activate() doesn't un-minimize windows
+    /// Returns true if any windows were un-minimized, false otherwise
+    private func unminimizeWindows(for appName: String) -> Bool {
+        let script = """
+        tell application "System Events"
+            try
+                tell process "\(appName)"
+                    set visible to true
+                    set foundMinimized to false
+                    repeat with w in windows
+                        if value of attribute "AXMinimized" of w is true then
+                            set value of attribute "AXMinimized" of w to false
+                            set foundMinimized to true
+                        end if
+                    end repeat
+                    return foundMinimized
+                end tell
+            on error
+                return false
+            end try
+        end tell
+        """
+
+        var error: NSDictionary?
+        if let scriptObject = NSAppleScript(source: script) {
+            let result = scriptObject.executeAndReturnError(&error)
+            if let error = error {
+                print("⚠️ Failed to un-minimize windows for \(appName): \(error)")
+                return false
+            } else {
+                let hadMinimized = result.booleanValue
+                if hadMinimized {
+                    print("✅ Un-minimized windows for \(appName)")
+                }
+                return hadMinimized
+            }
+        }
+        return false
     }
 
     /// Get the currently frontmost application

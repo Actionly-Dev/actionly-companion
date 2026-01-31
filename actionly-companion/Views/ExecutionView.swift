@@ -233,6 +233,20 @@ struct ExecutionView: View {
     // MARK: - Helpers
 
     private func rowState(for index: Int) -> ExecutionActionRow.State {
+        // If execution is complete, all actions up to currentStepIndex are completed
+        if session.isComplete {
+            if index <= session.currentStepIndex {
+                if session.error != nil {
+                    return index == session.currentStepIndex ? .failed : .completed
+                } else {
+                    return .completed
+                }
+            } else {
+                return .pending
+            }
+        }
+
+        // During execution
         if index < session.currentStepIndex {
             return .completed
         } else if index == session.currentStepIndex {

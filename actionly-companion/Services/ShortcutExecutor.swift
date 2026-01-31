@@ -174,6 +174,14 @@ class ShortcutExecutor {
                 return (false, message)
             }
 
+            // Check permissions before each action (user might revoke mid-execution)
+            guard checkAccessibilityPermissions() else {
+                let message = "Accessibility permissions were revoked during execution"
+                session.markFailed(error: message)
+                callbacks.onComplete?(false, message)
+                return (false, message)
+            }
+
             // Update session and notify
             session.setCurrentStep(index)
             callbacks.onStepStart?(index, action)

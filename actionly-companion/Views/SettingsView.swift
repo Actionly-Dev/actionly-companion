@@ -8,7 +8,7 @@
 import SwiftUI
 
 struct SettingsView: View {
-    @State private var settings = SettingsManager.shared
+    let settings = SettingsManager.shared
     @State private var tempApiToken: String = ""
     @State private var showTokenSaved: Bool = false
 

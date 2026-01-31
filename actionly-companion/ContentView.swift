@@ -6,12 +6,47 @@
 //
 
 import SwiftUI
+import ScreenCaptureKit
 
 struct ContentView: View {
+    let viewModel: AppViewModel
     var onClose: () -> Void
-    @State private var viewModel = AppViewModel()
+    @State private var showPermissions = false
+    @State private var permissionsChecked = false
 
     var body: some View {
+        Group {
+            if !permissionsChecked || showPermissions {
+                // Show permissions screen
+                PermissionsView(onPermissionsGranted: {
+                    showPermissions = false
+                })
+                .transition(.opacity)
+            } else {
+                // Show main content
+                mainContent
+            }
+        }
+        .animation(.easeInOut(duration: 0.3), value: showPermissions)
+        .frame(width: 600, height: dynamicHeight)
+        .background(
+            RoundedRectangle(cornerRadius: 16)
+                .fill(.ultraThinMaterial)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 16))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16)
+                .strokeBorder(Color.white.opacity(0.2), lineWidth: 1)
+        )
+        .shadow(color: .black.opacity(0.4), radius: 30, x: 0, y: 15)
+        .animation(.easeInOut(duration: 0.3), value: dynamicHeight)
+        .task {
+            await checkPermissionsOnLaunch()
+        }
+    }
+
+    @ViewBuilder
+    private var mainContent: some View {
         // Content based on current state
         Group {
             switch viewModel.currentState {
@@ -53,18 +88,6 @@ struct ContentView: View {
             }
         }
         .animation(.easeInOut(duration: 0.3), value: viewModel.currentState)
-        .frame(width: 600, height: dynamicHeight)
-        .background(
-            RoundedRectangle(cornerRadius: 16)
-                .fill(.ultraThinMaterial)
-        )
-        .clipShape(RoundedRectangle(cornerRadius: 16))
-        .overlay(
-            RoundedRectangle(cornerRadius: 16)
-                .strokeBorder(Color.white.opacity(0.2), lineWidth: 1)
-        )
-        .shadow(color: .black.opacity(0.4), radius: 30, x: 0, y: 15)
-        .animation(.easeInOut(duration: 0.3), value: dynamicHeight)
         .onExitCommand {
             // Handle ESC key
             switch viewModel.currentState {
@@ -83,6 +106,10 @@ struct ContentView: View {
 
     // Dynamic height based on current view
     private var dynamicHeight: CGFloat {
+        if !permissionsChecked || showPermissions {
+            return 550 // Height for permissions view
+        }
+
         switch viewModel.currentState {
         case .input:
             return 300
@@ -92,6 +119,32 @@ struct ContentView: View {
             return 500
         case .completion:
             return 300
+        }
+    }
+
+    private func checkPermissionsOnLaunch() async {
+        // Check accessibility
+        let hasAccessibility = ShortcutExecutor.shared.checkAccessibilityPermissions()
+
+        // Check screen recording
+        let hasScreenRecording = await checkScreenRecordingPermission()
+
+        // Update state
+        await MainActor.run {
+            permissionsChecked = true
+            showPermissions = !hasAccessibility || !hasScreenRecording
+        }
+    }
+
+    private func checkScreenRecordingPermission() async -> Bool {
+        do {
+            let content = try await SCShareableContent.excludingDesktopWindows(
+                false,
+                onScreenWindowsOnly: true
+            )
+            return !content.displays.isEmpty
+        } catch {
+            return false
         }
     }
 }
@@ -115,5 +168,5 @@ extension AppState: Equatable {
 }
 
 #Preview {
-    ContentView(onClose: {})
+    ContentView(viewModel: AppViewModel(), onClose: {})
 }

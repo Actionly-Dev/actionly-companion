@@ -104,7 +104,7 @@ extension NSAttributedString.Key {
 // MARK: - InputView
 
 struct InputView: View {
-    @State var viewModel: AppViewModel
+    @Bindable var viewModel: AppViewModel
     @FocusState private var isTextFieldFocused: Bool
 
     // @mention state
@@ -279,7 +279,9 @@ struct ChipTextEditor: NSViewRepresentable {
 
     func makeNSView(context: Context) -> NSScrollView {
         let scrollView = NSTextView.scrollableTextView()
-        let textView = scrollView.documentView as! NSTextView
+        guard let textView = scrollView.documentView as? NSTextView else {
+            fatalError("NSTextView.scrollableTextView() did not return a valid NSTextView")
+        }
 
         textView.delegate = context.coordinator
         textView.isRichText = true
@@ -516,7 +518,11 @@ struct ChipTextEditor: NSViewRepresentable {
         }
 
         private func checkForMention(in textView: NSTextView) {
-            let storage = textView.textStorage!
+            guard let storage = textView.textStorage else {
+                parent.onMentionChange(false, "", 0)
+                return
+            }
+
             let cursorPos = textView.selectedRange().location
 
             guard cursorPos <= storage.length else {
